@@ -275,6 +275,10 @@ dtb-$(CONFIG_MACH_SONY_SUMIRE_DSDS) += msm8994-v2.0-kitakami_sumire_dsds.dtb \
 	msm8994-v2.1-kitakami_sumire_dsds.dtb
 dtb-$(CONFIG_MACH_SONY_SUZURAN) += msm8994-v2.0-kitakami_suzuran_generic.dtb \
 	msm8994-v2.1-kitakami_suzuran_generic.dtb
+dtb-$(CONFIG_MACH_SONY_SATSUKI) += msm8994-v2.0-kitakami_satsuki_generic.dtb \
+	msm8994-v2.1-kitakami_satsuki_generic.dtb
+dtb-$(CONFIG_MACH_SONY_SATSUKI_DSDS) += msm8994-v2.0-kitakami_satsuki_dsds.dtb \
+	msm8994-v2.1-kitakami_satsuki_dsds.dtb
 endif
 
 DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES))

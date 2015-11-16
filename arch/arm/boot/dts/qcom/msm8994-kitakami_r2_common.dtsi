@@ -148,6 +148,8 @@
 			qcom,scaling-factor = <10>;
 		};
 	};
+
+	/delete-node/ qcom,cnss@06300000;
 };
 
 &pm8994_mpps {

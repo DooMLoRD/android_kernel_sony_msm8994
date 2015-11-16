@@ -3952,26 +3952,7 @@ static int dwc3_msm_remove(struct platform_device *pdev)
 static void dwc3_msm_shutdown(struct platform_device *pdev)
 {
 	struct dwc3_msm *mdwc = platform_get_drvdata(pdev);
-
 	msm_dwc3_vbus_control(mdwc, false);
-
-	if (!mdwc->ext_xceiv.bsv && !mdwc->ext_bsv) {
-		struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
-		struct regulator *vbus_rec = devm_regulator_get(
-						dwc->dev->parent, "vbus_rec");
-		if (!vbus_rec) {
-			dev_err(mdwc->dev, "failed to get vbus_rec\n");
-		} else {
-			int rc;
-			msleep(20);
-			rc = regulator_enable(vbus_rec);
-			if (!rc) {
-				msleep(20);
-				regulator_disable(vbus_rec);
-			}
-		}
-	}
-
 	msleep(200);
 }
 

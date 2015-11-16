@@ -1,4 +1,4 @@
-/* arch/arm/boot/dts/qcom/msm8994-kitakami_sumire_common.dtsi
+/* arch/arm/boot/dts/qcom/msm8994-kitakami_satsuki_common.dtsi
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -722,13 +722,44 @@
 				<55 512 120000 1200000>,
 				<55 512 393600 3936000>;
 		clock-names = "core_clk", "ufs_core_clk_src", "ufs_core_clk",
-			      "ufs_bus_clk", "ufs_iface_clk";
+			"ufs_bus_clk", "ufs_iface_clk";
 		clocks = <&clock_rpm clk_qseecom_ce1_clk>,
-                         <&clock_gcc clk_ufs_axi_clk_src>,
-                         <&clock_gcc clk_gcc_ufs_axi_clk>,
-                         <&clock_gcc clk_gcc_sys_noc_ufs_axi_clk>,
+			<&clock_gcc clk_ufs_axi_clk_src>,
+			<&clock_gcc clk_gcc_ufs_axi_clk>,
+			<&clock_gcc clk_gcc_sys_noc_ufs_axi_clk>,
 			 <&clock_gcc clk_gcc_ufs_ahb_clk>;
 		qcom,ce-opp-freq = <171430000>;
+	};
+
+	mdss_dsi0: qcom,mdss_dsi@fd998000 {
+		qcom,panel-supply-entries {
+			qcom,panel-supply-entry@0 {
+				qcom,supply-min-voltage = <1850000>;
+				qcom,supply-max-voltage = <1850000>;
+			};
+		};
+	};
+
+	mdss_dsi1: qcom,mdss_dsi@fd9a0000 {
+		qcom,panel-supply-entries {
+			qcom,panel-supply-entry@0 {
+				qcom,supply-min-voltage = <1850000>;
+				qcom,supply-max-voltage = <1850000>;
+			};
+		};
+	};
+
+	/* I2C : BLSP6 */
+	i2c@f9928000 {
+		synaptics_clearpad@2c {
+			num_sensor_rx = <23>;
+			num_sensor_tx = <13>;
+			preset_x_max = <2159>;
+			preset_y_max = <3839>;
+			cover_tag_x_max = <1080>;
+			cover_tag_y_max = <1920>;
+			convert_cover_win_size = <1>;
+		};
 	};
 
 	tlmm_pinmux: pinctrl@fd510000 {
@@ -750,6 +781,20 @@
 			};
 		};
 	};
+
+	slim_msm: slim@fe12f000 {
+		tomtom_codec {
+			qcom,cdc-micbias-cfilt1-mv = <1940>;
+			qcom,cdc-dmic_clk_drv_strength = <4>;
+		};
+	};
+
+};
+
+&pm8994_l14 {
+	regulator-min-microvolt = <1850000>;
+	regulator-max-microvolt = <1850000>;
+	qcom,init-voltage = <1850000>;
 };
 
 &pm8994_gpios {
@@ -758,30 +803,6 @@
 		qcom,master-en = <0>;		/* Disable */
 		status = "ok";
 	};
-};
-
-&pmi8994_gpios {
-	/* GPIO_3: NC (TUNER_ANT_SW_EN) */
-	gpio@c200 {
-		qcom,master-en = <0>;		/* Disable */
-		status = "ok";
-	};
-
-	/* GPIO_4: NC (TUNER_ANT_SW1) */
-	gpio@c300 {
-		qcom,master-en = <0>;		/* Disable */
-		status = "ok";
-	};
-
-	/* GPIO_5: NC */
-	gpio@c400 {
-		qcom,master-en = <0>;		/* Disable */
-		status = "ok";
-	};
-};
-
-&pm8994_l19 {
-	status = "disabled";
 };
 
 &spmi_bus {
@@ -815,23 +836,33 @@
 			somc,calc-curr;
 			somc,init-br = <1638>;
 			somc-s1,br-power-save = <131>;
-			qcom,led-strings-list = [00 01];
+			qcom,led-strings-list = [00 01 02];
 		};
 	};
 };
 
-&tlmm_pinmux {
-	/* GPIO_9: USB_SHELL_SEL */
-	msm_gpio_9 {
-		qcom,pin-func = <0>;
-		msm_gpio_9_def: default {
-			drive-strength = <2>;
-			bias-disable;
-			output-high;
-			/delete-property/ output-low;
-		};
+&pmi8994_gpios {
+	/* GPIO_3: NC (TUNER_ANT_SW_EN) */
+	gpio@c200 {
+		qcom,master-en = <0>;		/* Disable */
+		status = "ok";
 	};
 
+	/* GPIO_4: NC (TUNER_ANT_SW1) */
+	gpio@c300 {
+		qcom,master-en = <0>;		/* Disable */
+		status = "ok";
+	};
+
+	/* GPIO_5: NC (USB_HOST_VBUS_EN) */
+	gpio@c400 {
+		qcom,master-en = <0>;		/* Disable */
+		status = "ok";
+	};
+
+};
+
+&tlmm_pinmux {
 	/* GPIO_41: NC */
 	msm_gpio_41 {
 		qcom,pin-func = <0>;
@@ -852,6 +883,16 @@
 			bias-disable;
 			output-low;
 			/delete-property/ input-enable;
+		};
+	};
+
+	/* GPIO_87: 4K_DISP_DCDC_EN */
+	msm_gpio_87 {
+		qcom,pin-func = <0>;
+		msm_gpio_87_def: default {
+			drive-strength = <2>;
+			bias-disable;
+			output-low;
 		};
 	};
 
@@ -900,44 +941,59 @@
 };
 
 &somc_pinctrl {
-	pinctrl-1 = <&msm_gpio_49_def &msm_gpio_50_def &msm_gpio_51_def &msm_gpio_125_def &msm_gpio_130_def
-		     &msm_gpio_132_def &msm_gpio_133_def &msm_gpio_142_def &msm_gpio_143_def>;
+	pinctrl-1 = <&msm_gpio_49_def &msm_gpio_50_def &msm_gpio_51_def &msm_gpio_116_def &msm_gpio_117_def &msm_gpio_118_def
+		     &msm_gpio_121_def &msm_gpio_123_def &msm_gpio_124_def &msm_gpio_125_def &msm_gpio_126_def &msm_gpio_127_def
+		     &msm_gpio_130_def &msm_gpio_132_def &msm_gpio_133_def &msm_gpio_142_def &msm_gpio_143_def>;
 };
 
-&hsphy0 {
-       qcom,hsphy-init = <0x00FBDFA7>;
-       qcom,hsphy-init-host = <0x00FBC7A7>;
+&mdss_fb0 {
+	linux,contiguous-region = <&fb_mem>;
 };
 
 &mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_dual_0_default_gpio_0>;
+	pinctrl-names = "mdss_default", "mdss_sleep";
+	pinctrl-0 = <&msm_gpio_10_act &msm_gpio_56_act &msm_gpio_78_act>;
+	pinctrl-1 = <&msm_gpio_10_sus &msm_gpio_56_sus &msm_gpio_78_sus>;
+	qcom,dsi-panel-bias-vreg;
+	qcom,platform-reset-gpio = <&msm_gpio 78 0>;
+	somc,platform-disp-dcdc-en-gpio = <&msm_gpio 87 0>;
 	/delete-property/ qcom,platform-enable-gpio;
+	qcom,platform-regulator-settings = [];
+	qcom,platform-lane-config = [];
 };
 
-/{
-	kitakami_sumire_batterydata: qcom,battery-data {
-		#include "batterydata-kitakami-sumire-send.dtsi"
+&mdss_dsi1 {
+	status = "ok";
+	qcom,dsi-pref-prim-pan = <&dsi_dual_1_default_gpio_0>;
+	qcom,platform-regulator-settings = [];
+	qcom,platform-lane-config = [];
+};
+
+/ {
+	kitakami_satsuki_batterydata: qcom,battery-data {
+		#include "batterydata-kitakami-satsuki-send.dtsi"
 	};
 };
 
 &pmi8994_fg {
-	qcom,battery-data = <&kitakami_sumire_batterydata>;
-	qcom,fg-iterm-ma = <150>;
+	qcom,battery-data = <&kitakami_satsuki_batterydata>;
+	qcom,fg-iterm-ma = <175>;
+	qcom,fg-chg-iterm-ma = <175>;
 };
 
 &pmi8994_charger {
-	qcom,fastchg-current-ma = <1500>;
-	somc,fastchg-warm-current-ma = <700>;
-	somc,fastchg-cool-current-ma = <700>;
-	qcom,iterm-ma = <150>;
+	qcom,fastchg-current-ma = <2300>;
+	somc,fastchg-warm-current-ma = <1000>;
+	somc,fastchg-cool-current-ma = <1000>;
+	qcom,iterm-ma = <200>;
 	qcom,precharging-timeout-mins = <24>;
 	qcom,charging-timeout-mins = <768>;
-	somc,step-charge-en = <1>;
-	somc,step-charge-threshold = <65>;
-	somc,step-charge-current-ma = <2100>;
-	somc,thermal-engine-fastchg-current = <2100 1950 1800 1100 900 700 500 400 300 300 300 300 300 0 0>;
-	somc,thermal-mitigation-usb-9v = <1500 1400 1300 1000 1000 1000 1000 1000 1200 900 700 500 300 0 0>;
+	somc,usb-9v-current-max = <1600>;
+	somc,thermal-engine-fastchg-current = <2300 2100 1800 1100 900 700 500 400 300 300 300 300 300 0 0>;
+	somc,thermal-mitigation-usb-9v = <1500 1400 1300 1000 1000 1000 900 900 700 500 400 300 300 0 0>;
 	somc,thermal-mitigation-usb-5v = <1500 1500 1500 1500 1500 1500 1500 1500 1200 900 700 500 300 0 0>;
-	somc,limit-usb-5v-level = <8>;
+	somc,limit-usb-5v-level = <12>;
 };
 
 &sdhc_2 {

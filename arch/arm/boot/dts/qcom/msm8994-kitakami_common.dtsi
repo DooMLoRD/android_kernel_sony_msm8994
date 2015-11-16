@@ -1102,7 +1102,6 @@
 	qcom,usb_dm-vadc = <&pmi8994_vadc>;
 	mhl_switch_sel1_gpio = <&pmi8994_gpios 9 0>;
 	mhl_switch_sel2_gpio = <&pmi8994_gpios 10 0>;
-	vbus_rec-supply = <&smbcharger_charger_otg>;
 	dwc3@f9200000 {
 		maximum-speed = "high-speed";
 	};

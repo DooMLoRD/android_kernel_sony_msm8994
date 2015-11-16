@@ -1209,17 +1209,49 @@ error:
 	return -ENODEV;
 }
 
-static void mdss_dsi_panel_poll_worker_scheduling
-(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+static void mdss_dsi_panel_poll_worker_scheduling(
+		struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	struct poll_ctrl *polling = NULL;
+	struct mdss_panel_info *pinfo = NULL;
+
+	if (ctrl_pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return;
+	}
 
 	polling = &ctrl_pdata->spec_pdata->polling;
+	pinfo = &ctrl_pdata->panel_data.panel_info;
 
-	if (polling && polling->enable && display_onoff_state) {
-		polling->ctrl_pdata = ctrl_pdata;
-		schedule_delayed_work(&polling->poll_working,
+	if (pinfo->dsi_master == pinfo->pdest) {
+		if (polling->enable && display_onoff_state) {
+			polling->ctrl_pdata = ctrl_pdata;
+			schedule_delayed_work(
+				&polling->poll_working,
 				msecs_to_jiffies(polling->intervals));
+		}
+	}
+}
+
+static void mdss_dsi_panel_poll_worker_canceling(
+		struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	struct poll_ctrl *polling = NULL;
+	struct mdss_panel_info *pinfo = NULL;
+
+	if (ctrl_pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return;
+	}
+
+	polling = &ctrl_pdata->spec_pdata->polling;
+	pinfo = &ctrl_pdata->panel_data.panel_info;
+
+	if (pinfo->dsi_master == pinfo->pdest) {
+		if (polling->enable) {
+			cancel_delayed_work_sync(&polling->poll_working);
+			polling->ctrl_pdata = NULL;
+		}
 	}
 }
 
@@ -1318,7 +1350,6 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 	struct mdss_panel_specific_pdata *spec_pdata = NULL;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	struct mdss_mdp_ctl *ctl = mdata->ctl_off;
-	struct poll_ctrl *polling = NULL;
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -1335,9 +1366,7 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 		return -EINVAL;
 	}
 
-	polling = &spec_pdata->polling;
-	if (polling && polling->enable)
-		polling->ctrl_pdata = NULL;
+	mdss_dsi_panel_poll_worker_canceling(ctrl);
 
 	if (pinfo->dcs_cmd_by_left) {
 		if (ctrl->ndx != DSI_CTRL_LEFT)
@@ -3506,8 +3535,11 @@ int mdss_dsi_panel_init(struct device_node *node,
 	}
 
 	polling = &spec_pdata->polling;
-	if (polling && polling->enable && pinfo->dsi_master == pinfo->pdest)
-		mdss_dsi_panel_poll_init(ctrl_pdata);
+
+	if (pinfo->dsi_master == pinfo->pdest) {
+		if (polling->enable)
+			mdss_dsi_panel_poll_init(ctrl_pdata);
+	}
 
 	cont_splash_enabled = display_on_in_boot;
 
@@ -3524,15 +3556,13 @@ int mdss_dsi_panel_init(struct device_node *node,
 		pinfo->cont_splash_enabled = 1;
 		if (pinfo->dsi_master == pinfo->pdest) {
 			display_onoff_state = true;
-			if (polling && polling->enable) {
+
+			if (polling->enable) {
 				intval_buf = polling->intervals;
 				polling->intervals = FIRST_POLL_REG_INTERVAL;
-			}
-
-			mdss_dsi_panel_poll_worker_scheduling(ctrl_pdata);
-
-			if (polling && polling->enable)
+				mdss_dsi_panel_poll_worker_scheduling(ctrl_pdata);
 				polling->intervals = intval_buf;
+			}
 		}
 	}
 
