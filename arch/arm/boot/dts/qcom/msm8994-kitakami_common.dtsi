@@ -1053,6 +1053,13 @@
 			qcom,s3-debounce = <8>;
 			qcom,s3-src = "resin";
 			/delete-node/ qcom,pon_2;
+			qcom,pon_3 {
+				/delete-property/ qcom,support-reset;
+				/delete-property/ qcom,s1-timer;
+				/delete-property/ qcom,s2-timer;
+				/delete-property/ qcom,s2-type;
+				/delete-property/ qcom,use-bark;
+			};
 		};
 	};
 

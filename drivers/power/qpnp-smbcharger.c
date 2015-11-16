@@ -264,6 +264,7 @@ enum print_reason {
 enum wake_reason {
 	PM_PARALLEL_CHECK = BIT(0),
 	PM_REASON_VFLOAT_ADJUST = BIT(1),
+	PM_PARALLEL_TAPER = BIT(3),
 };
 
 #ifdef CONFIG_QPNP_SMBCHARGER_EXTENSION
@@ -930,6 +931,7 @@ static int get_prop_batt_capacity(struct smbchg_chip *chip)
 		capacity = DEFAULT_BATT_CAPACITY;
 	}
 #ifdef CONFIG_QPNP_SMBCHARGER_EXTENSION
+	capacity = somc_llk_get_capacity(&chip->somc_params, capacity);
 	somc_chg_shutdown_lowbatt(chip->bms_psy);
 #endif
 	return capacity;
@@ -1668,8 +1670,10 @@ static bool smbchg_is_parallel_usb_ok(struct smbchg_chip *chip)
 
 	kt_since_last_disable = ktime_sub(ktime_get_boottime(),
 					chip->parallel.last_disabled);
-	if (chip->parallel.enabled_once && ktime_to_ms(kt_since_last_disable)
-					< PARALLEL_REENABLE_TIMER_MS) {
+	if (chip->parallel.current_max_ma == 0
+		&& chip->parallel.enabled_once
+		&& ktime_to_ms(kt_since_last_disable)
+			< PARALLEL_REENABLE_TIMER_MS) {
 		pr_smb(PR_STATUS, "Only been %lld since disable, skipping\n",
 				ktime_to_ms(kt_since_last_disable));
 		return false;
@@ -1860,6 +1864,7 @@ static void smbchg_parallel_usb_taper(struct smbchg_chip *chip)
 	if (!parallel_psy || !chip->parallel_charger_detected)
 		return;
 
+	smbchg_stay_awake(chip, PM_PARALLEL_TAPER);
 try_again:
 	mutex_lock(&chip->parallel.lock);
 	if (chip->parallel.current_max_ma == 0) {
@@ -1905,6 +1910,7 @@ try_again:
 	taper_irq_en(chip, true);
 done:
 	mutex_unlock(&chip->parallel.lock);
+	smbchg_relax(chip, PM_PARALLEL_TAPER);
 }
 
 #ifndef CONFIG_QPNP_SMBCHARGER_EXTENSION
@@ -3140,6 +3146,9 @@ static int smbchg_dc_get_property(struct power_supply *psy,
 {
 	struct smbchg_chip *chip = container_of(psy,
 				struct smbchg_chip, dc_psy);
+#ifdef CONFIG_QPNP_SMBCHARGER_EXTENSION
+	int status;
+#endif
 
 	switch (prop) {
 	case POWER_SUPPLY_PROP_PRESENT:
@@ -3150,9 +3159,16 @@ static int smbchg_dc_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_ONLINE:
 		/* return if dc is charging the battery */
+#ifdef CONFIG_QPNP_SMBCHARGER_EXTENSION
+		status = get_prop_batt_status(chip);
+		val->intval = (smbchg_get_pwr_path(chip) == PWR_PATH_DC)
+				&& ((status == POWER_SUPPLY_STATUS_CHARGING)
+				|| (status == POWER_SUPPLY_STATUS_FULL));
+#else
 		val->intval = (smbchg_get_pwr_path(chip) == PWR_PATH_DC)
 				&& (get_prop_batt_status(chip)
 					== POWER_SUPPLY_STATUS_CHARGING);
+#endif
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		val->intval = chip->dc_max_current_ma * 1000;
@@ -6337,6 +6353,7 @@ static int smbchg_probe(struct spmi_device *spmi)
 	mutex_init(&chip->pm_lock);
 	mutex_init(&chip->wipower_config);
 	mutex_init(&chip->usb_status_lock);
+	device_init_wakeup(chip->dev, true);
 #ifdef CONFIG_QPNP_SMBCHARGER_EXTENSION
 	spin_lock_init(&chip->otg_present_lock);
 	chip->somc_params.dev = chip->dev;

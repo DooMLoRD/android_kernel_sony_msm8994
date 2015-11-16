@@ -234,8 +234,8 @@ int mdss_mdp_overlay_req_check(struct msm_fb_data_type *mfd,
 	yres = mfd->fbi->var.yres;
 
 	content_secure = (req->flags & MDP_SECURE_OVERLAY_SESSION);
-	if (!ctl->is_secure && content_secure &&
-				 (mfd->panel.type == WRITEBACK_PANEL)) {
+	if ((content_secure && (mfd->panel.type == WRITEBACK_PANEL)) &&
+						!ctl && !ctl->is_secure) {
 		pr_debug("return due to security concerns\n");
 		return -EPERM;
 	}
@@ -1036,6 +1036,9 @@ exit_fail:
 
 	/* invalidate any overlays in this framebuffer after failure */
 	list_for_each_entry(pipe, &mdp5_data->pipes_used, list) {
+		if (pipe->type == MDSS_MDP_PIPE_TYPE_CURSOR)
+			continue;
+
 		pr_debug("freeing allocations for pipe %d\n", pipe->num);
 		mdss_mdp_smp_unreserve(pipe);
 		pipe->params_changed = 0;
@@ -1581,7 +1584,9 @@ static int __overlay_queue_pipes(struct msm_fb_data_type *mfd)
 					pipe->num);
 			mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_left);
 			mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_right);
-			pipe->dirty = true;
+
+			if (pipe->type != MDSS_MDP_PIPE_TYPE_CURSOR)
+				pipe->dirty = true;
 
 			if (buf)
 				__pipe_buf_mark_cleanup(mfd, buf);
@@ -1702,12 +1707,25 @@ int mdss_mode_switch(struct msm_fb_data_type *mfd, u32 mode)
 {
 	struct mdss_rect l_roi, r_roi;
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
+	struct mdss_mdp_ctl *sctl;
 	int rc;
 
-	pr_debug("%s, start\n", __func__);
+	pr_debug("fb%d switch to mode=%x\n", mfd->index, mode);
+	ATRACE_FUNC();
+
+	ctl->pending_mode_switch = mode;
+	sctl = mdss_mdp_get_split_ctl(ctl);
+	if (sctl)
+		sctl->pending_mode_switch = mode;
 
 	/* No need for mode validation. It has been done in ioctl call */
-	if (mode == MIPI_CMD_PANEL) {
+	if (mode == SWITCH_RESOLUTION) {
+		if (ctl->ops.reconfigure) {
+			rc = ctl->ops.reconfigure(ctl, mode, 1);
+			if (rc)
+				return rc;
+		}
+	} else if (mode == MIPI_CMD_PANEL) {
 		/*
 		 * Need to reset roi if there was partial update in previous
 		 * Command frame
@@ -1739,17 +1757,16 @@ int mdss_mode_switch(struct msm_fb_data_type *mfd, u32 mode)
 		return -EINVAL;
 	}
 
-	ctl->force_ctl_start = 1;
 	mdss_mdp_ctl_start(ctl, true);
-	ctl->force_ctl_start = 0;
+	ATRACE_END(__func__);
 
-	pr_debug("%s, end\n", __func__);
 	return 0;
 }
 
 int mdss_mode_switch_post(struct msm_fb_data_type *mfd, u32 mode)
 {
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
+	struct mdss_mdp_ctl *sctl;
 	int rc = 0;
 	u32 frame_rate = 0;
 
@@ -1779,7 +1796,15 @@ int mdss_mode_switch_post(struct msm_fb_data_type *mfd, u32 mode)
 		 */
 		mdss_mdp_ctl_intf_event(ctl,
 			MDSS_EVENT_PANEL_CLK_CTRL, (void *)0);
+	} else if (mode == SWITCH_RESOLUTION) {
+		if (ctl->ops.reconfigure)
+			rc = ctl->ops.reconfigure(ctl, mode, 0);
 	}
+	ctl->pending_mode_switch = 0;
+	sctl = mdss_mdp_get_split_ctl(ctl);
+	if (sctl)
+		sctl->pending_mode_switch = 0;
+
 	return rc;
 }
 
@@ -3100,13 +3125,13 @@ int mdss_mdp_cursor_flush(struct msm_fb_data_type *mfd,
 	return 0;
 }
 
-int mdss_mdp_cursor_pipe_setup(struct msm_fb_data_type *mfd,
-		struct mdp_overlay *req, int cursor_pipe) {
+static int mdss_mdp_cursor_pipe_setup(struct msm_fb_data_type *mfd,
+		struct mdp_overlay *req, int cursor_pipe,
+		struct ion_handle *ion_handle, dma_addr_t iova, size_t size)
+{
 	struct mdss_mdp_pipe *pipe;
 	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
-	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	int ret = 0;
-	u32 cursor_addr;
 	struct mdss_mdp_data *buf = NULL;
 
 	req->id = mdp5_data->cursor_ndx[cursor_pipe];
@@ -3121,20 +3146,29 @@ int mdss_mdp_cursor_pipe_setup(struct msm_fb_data_type *mfd,
 	pr_debug("req id:%d cursor_pipe:%d pnum:%d\n",
 		req->id, cursor_pipe, pipe->ndx);
 
-	cursor_addr = mfd->cursor_buf_iova;
-
-	buf = mdss_mdp_overlay_buf_alloc(mfd, pipe);
-	if (!buf) {
-		pr_err("unable to allocate memory for cursor buffer\n");
-		ret = -ENOMEM;
-		goto done;
+	if (iova) {
+		buf = mdss_mdp_overlay_buf_alloc(mfd, pipe);
+		if (!buf) {
+			ret = -ENOMEM;
+			goto done;
+		}
+		mdp5_data->cursor_ndx[cursor_pipe] = pipe->ndx;
+		buf->p[0].addr = iova;
+		buf->p[0].srcp_ihdl = ion_handle;
+		buf->p[0].len = size;
+		buf->p[0].mapped = true;
+		buf->num_planes = 1;
+		buf->state = MDP_BUF_STATE_ACTIVE;
+	} else if (!(req->flags & MDP_SOLID_FILL)) {
+		buf = list_first_entry_or_null(&pipe->buf_queue,
+				struct mdss_mdp_data, pipe_list);
+		if (!buf) {
+			pr_err("cursor pipe buf empty\n");
+			ret = -EINVAL;
+			goto done;
+		}
 	}
-	mdp5_data->cursor_ndx[cursor_pipe] = pipe->ndx;
-	buf->p[0].addr = cursor_addr;
-	buf->p[0].len = mdss_mdp_get_cursor_frame_size(mdata);
-	buf->num_planes = 1;
 
-	buf->state = MDP_BUF_STATE_ACTIVE;
 	if (!(req->flags & MDP_SOLID_FILL))
 		ret = mdss_mdp_pipe_queue_data(pipe, buf);
 	else
@@ -3161,15 +3195,18 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 	struct fb_image *img = &cursor->image;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	struct mdp_overlay *req = NULL;
-	struct mdss_rect roi;
+	struct mdss_rect roi, src_crop;
 	int ret = 0;
 	struct fb_var_screeninfo *var = &mfd->fbi->var;
-	u32 xres = var->xres;
-	u32 yres = var->yres;
 	u32 start_x = img->dx;
 	u32 start_y = img->dy;
 	u32 left_lm_w = left_lm_w_from_mfd(mfd);
-	u32 cursor_frame_size = mdss_mdp_get_cursor_frame_size(mdata);
+	struct ion_handle *ion_handle = NULL;
+	void *cursor_buf = NULL;
+	struct ion_client *ion_client = mdss_get_ionclient();
+	size_t size = 0;
+	dma_addr_t iova = 0;
+	unsigned long buf_size = 0;
 
 	ret = mutex_lock_interruptible(&mdp5_data->ov_lock);
 	if (ret)
@@ -3183,6 +3220,7 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 	if (!cursor->enable) {
 		mdss_mdp_curor_pipe_cleanup(mfd, CURSOR_PIPE_LEFT);
 		mdss_mdp_curor_pipe_cleanup(mfd, CURSOR_PIPE_RIGHT);
+		mfd->cursor_buf_size = 0;
 		goto done;
 	}
 
@@ -3192,28 +3230,75 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 		goto done;
 	}
 
-	if (!mfd->cursor_buf && (cursor->set & FB_CUR_SETIMAGE)) {
-		mfd->cursor_buf = dma_alloc_coherent(&mfd->pdev->dev,
-			cursor_frame_size, (dma_addr_t *)
-			&mfd->cursor_buf_phys, GFP_KERNEL);
-		if (!mfd->cursor_buf) {
-			pr_err("can't allocate cursor buffer\n");
-			ret = -ENOMEM;
+	/*
+	 * image width/height and src crop width/height are packed with
+	 * img->width/height and src crop x/y is passed through hotx/hoty
+	 * when using our HAL is used.
+	 */
+	if (img->width & 0xffff0000) {
+		src_crop = (struct mdss_rect) {cursor->hot.x, cursor->hot.y,
+			img->width >> 16, img->height >> 16};
+		img->width &= 0x0000ffff;
+		img->height &= 0x0000ffff;
+		cursor->hot.x = 0;
+		cursor->hot.y = 0;
+	} else {
+		src_crop = (struct mdss_rect) {0, 0, img->width, img->height};
+	}
+
+	if ((src_crop.w > mdata->max_cursor_size) ||
+		(src_crop.h > mdata->max_cursor_size) || (img->depth != 32) ||
+		(start_x >= var->xres) || (start_y >= var->yres)) {
+		pr_debug("start_x:%d, start_y:%d, src_crop{%d,%d,%d,%d} img->depth:%d\n",
+				start_x, start_y, src_crop.x, src_crop.y,
+				src_crop.w, src_crop.h, img->depth);
+		ret = -EINVAL;
+		goto done;
+	}
+
+	size = img->width * img->height * 4;
+	if (size != mfd->cursor_buf_size) {
+		pr_debug("allocating cursor mem size:%zd\n", size);
+
+		if (!ion_client) {
+			pr_err("ion client is not defined\n");
+			ret = -ENODEV;
 			goto done;
 		}
 
-		ret = msm_iommu_map_contig_buffer(mfd->cursor_buf_phys,
-			mdss_get_iommu_domain(MDSS_IOMMU_DOMAIN_UNSECURE),
-			0, cursor_frame_size, SZ_4K, 0,
-			&(mfd->cursor_buf_iova));
-		if (IS_ERR_VALUE(ret)) {
-			dma_free_coherent(&mfd->pdev->dev, cursor_frame_size,
-					  mfd->cursor_buf,
-					  (dma_addr_t) mfd->cursor_buf_phys);
-			pr_err("unable to map cursor buffer to iommu(%d)\n",
-			       ret);
+		ion_handle = ion_alloc(ion_client, size, SZ_4K,
+				ION_HEAP(ION_SYSTEM_HEAP_ID), 0);
+		if (IS_ERR_OR_NULL(ion_handle)) {
+			ret = PTR_ERR(ion_handle);
+			pr_err("unable to alloc cursor mem from ion - %d\n",
+				ret);
 			goto done;
 		}
+
+		ret = ion_map_iommu(ion_client, ion_handle,
+			mdss_get_iommu_domain(MDSS_IOMMU_DOMAIN_UNSECURE),
+			0, SZ_4K, 0, &iova, &buf_size, 0, 0);
+		if (IS_ERR_VALUE(ret)) {
+			pr_err("cannot map cursor to IOMMU. ret=%d\n", ret);
+			goto done;
+		}
+
+		cursor_buf  = ion_map_kernel(ion_client, ion_handle);
+		if (IS_ERR_OR_NULL(cursor_buf)) {
+			ret = PTR_ERR(cursor_buf);
+			pr_err("cursor ION memory mapping failed - %d\n", ret);
+			goto done;
+		}
+
+		ret = copy_from_user(cursor_buf, img->data, size);
+		if (ret) {
+			pr_err("copy from user failed for cursor data\n");
+			ret = -EFAULT;
+			ion_unmap_kernel(ion_client, ion_handle);
+			goto done;
+		}
+		ion_unmap_kernel(ion_client, ion_handle);
+		mfd->cursor_buf_size = size;
 
 		mixer->cursor_hotx = 0;
 		mixer->cursor_hoty = 0;
@@ -3223,8 +3308,8 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 			cursor->set);
 
 	if (cursor->set & FB_CUR_SETHOT) {
-		if ((cursor->hot.x < img->width) &&
-			(cursor->hot.y < img->height)) {
+		if ((cursor->hot.x < src_crop.w) &&
+			(cursor->hot.y < src_crop.h)) {
 			mixer->cursor_hotx = cursor->hot.x;
 			mixer->cursor_hoty = cursor->hot.y;
 			 /* Update cursor position */
@@ -3235,6 +3320,10 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 			goto done;
 		}
 	}
+
+	pr_debug("src_crop{%d,%d,%d,%d}, img->width:%d, img->height:%d, hotx:%d, hoty:%d\n",
+			src_crop.x, src_crop.y, src_crop.w, src_crop.h,
+			img->width, img->height, cursor->hot.x, cursor->hot.y);
 
 	memset(&roi, 0, sizeof(struct mdss_rect));
 	if (start_x > mixer->cursor_hotx) {
@@ -3250,15 +3339,10 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 		start_y = 0;
 	}
 
-	roi.w = min(xres - start_x, img->width - roi.x);
-	roi.h = min(yres - start_y, img->height - roi.y);
-
-	if ((roi.w > mdata->max_cursor_size) ||
-		(roi.h > mdata->max_cursor_size) ||
-		(img->depth != 32) || (start_x >= xres) || (start_y >= yres)) {
-		ret = -EINVAL;
-		goto done;
-	}
+	roi.w = min_t(u32, (var->xres - start_x), (src_crop.w - roi.x));
+	roi.h = min_t(u32, (var->yres - start_y), (src_crop.h - roi.y));
+	roi.x += src_crop.x;
+	roi.y += src_crop.y;
 
 	req = kzalloc(sizeof(struct mdp_overlay), GFP_KERNEL);
 	if (!req) {
@@ -3276,6 +3360,9 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 
 	mdss_mdp_set_rect(&req->src_rect, roi.x, roi.y, roi.w, roi.h);
 	mdss_mdp_set_rect(&req->dst_rect, start_x, start_y, roi.w, roi.h);
+	pr_debug("src{%d,%d,%d,%d}, dst{%d,%d,%d,%d}\n",
+			roi.x, roi.y, roi.w, roi.h,
+			start_x, start_y, roi.w, roi.h);
 
 	req->bg_color = img->bg_color;
 	req->alpha = (img->fg_color >> ((32 - var->transp.offset) - 8)) & 0xff;
@@ -3284,18 +3371,6 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 	else
 		req->blend_op = BLEND_OP_COVERAGE;
 	req->transp_mask = img->bg_color & ~(0xff << var->transp.offset);
-
-	if (mfd->cursor_buf && (cursor->set & FB_CUR_SETIMAGE)) {
-		ret = copy_from_user(mfd->cursor_buf, img->data,
-				     img->width * img->height * 4);
-		if (ret) {
-			pr_err("copy_from_user error. rc=%d\n", ret);
-			goto done;
-		}
-
-		mixer->cursor_hotx = 0;
-		mixer->cursor_hoty = 0;
-	}
 
 	/*
 	 * When source split is enabled, only CURSOR_PIPE_LEFT is used,
@@ -3307,29 +3382,35 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 	 */
 	if (mdata->has_src_split || (!is_split_lm(mfd))
 			|| (mdata->ncursor_pipes == 1)) {
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_LEFT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req,
+				CURSOR_PIPE_LEFT, ion_handle, iova, size);
 	} else if ((start_x + roi.w) <= left_lm_w) {
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_LEFT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req,
+				CURSOR_PIPE_LEFT, ion_handle, iova, size);
 		if (ret)
 			goto done;
 		req->bg_color = 0;
 		req->flags |= MDP_SOLID_FILL;
 		req->dst_rect.x = left_lm_w;
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_RIGHT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req,
+				CURSOR_PIPE_RIGHT, NULL, 0, 0);
 	} else if (start_x >= left_lm_w) {
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_RIGHT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_RIGHT,
+				ion_handle, iova, size);
 		if (ret)
 			goto done;
 		req->bg_color = 0;
 		req->flags |= MDP_SOLID_FILL;
 		req->dst_rect.x = 0;
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_LEFT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_LEFT,
+				NULL, 0, 0);
 	} else if ((start_x <= left_lm_w) && ((start_x + roi.w) >= left_lm_w)) {
 		mdss_mdp_set_rect(&req->dst_rect, start_x, start_y,
 				(left_lm_w - start_x), roi.h);
 		mdss_mdp_set_rect(&req->src_rect, 0, 0, (left_lm_w -
 				start_x), roi.h);
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_LEFT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req,
+				CURSOR_PIPE_LEFT, ion_handle, iova, size);
 		if (ret)
 			goto done;
 
@@ -3337,7 +3418,8 @@ static int mdss_mdp_hw_cursor_pipe_update(struct msm_fb_data_type *mfd,
 				+ roi.w) - left_lm_w), roi.h);
 		mdss_mdp_set_rect(&req->src_rect, (left_lm_w - start_x), 0,
 				(roi.w - (left_lm_w - start_x)), roi.h);
-		ret = mdss_mdp_cursor_pipe_setup(mfd, req, CURSOR_PIPE_RIGHT);
+		ret = mdss_mdp_cursor_pipe_setup(mfd, req,
+				CURSOR_PIPE_RIGHT, NULL, iova, size);
 	} else {
 		pr_err("Invalid case for cursor pipe setup\n");
 		ret = -EINVAL;
@@ -3347,8 +3429,16 @@ done:
 	if (ret) {
 		mdss_mdp_curor_pipe_cleanup(mfd, CURSOR_PIPE_LEFT);
 		mdss_mdp_curor_pipe_cleanup(mfd, CURSOR_PIPE_RIGHT);
-	}
 
+		if (iova)
+			ion_unmap_iommu(ion_client, ion_handle,
+				mdss_get_iommu_domain(
+					MDSS_IOMMU_DOMAIN_UNSECURE), 0);
+		if (ion_handle)
+			ion_free(ion_client, ion_handle);
+
+		mfd->cursor_buf_size = 0;
+	}
 	kfree(req);
 	mutex_unlock(&mdp5_data->ov_lock);
 	return ret;
@@ -3949,6 +4039,21 @@ static int mdss_mdp_overlay_precommit(struct msm_fb_data_type *mfd)
 		pr_warn("fb%d: dirty pipes remaining %x\n",
 				mfd->index, ret);
 		ret = -EPIPE;
+	}
+	/*
+	 * If we are in process of mode switch we may have an invalid state.
+	 * We can allow commit to happen if there are no pipes attached as only
+	 * border color will be seen regardless of resolution or mode.
+	 */
+	if ((mfd->switch_state != MDSS_MDP_NO_UPDATE_REQUESTED) &&
+			(mfd->switch_state != MDSS_MDP_WAIT_FOR_COMMIT)) {
+		if (list_empty(&mdp5_data->pipes_used)) {
+			mfd->switch_state = MDSS_MDP_WAIT_FOR_COMMIT;
+		} else {
+			pr_warn("Invalid commit on fb%d with state=%d\n",
+					mfd->index, mfd->switch_state);
+			ret = -EINVAL;
+		}
 	}
 	mutex_unlock(&mdp5_data->ov_lock);
 
@@ -4888,6 +4993,11 @@ static int mdss_mdp_update_panel_info(struct msm_fb_data_type *mfd,
 	struct mdss_panel_data *pdata;
 	struct mdss_mdp_ctl *sctl;
 
+	if (ctl == NULL) {
+		pr_debug("ctl not initialized\n");
+		return 0;
+	}
+
 	ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_DSI_UPDATE_PANEL_DATA,
 						(void *)(unsigned long)mode);
 	if (ret)
@@ -4902,18 +5012,42 @@ static int mdss_mdp_update_panel_info(struct msm_fb_data_type *mfd,
 		mdss_mdp_ctl_destroy(mdp5_data->ctl);
 		mdp5_data->ctl = NULL;
 	} else {
+		if (is_panel_split(mfd) && mdp5_data->mdata->has_pingpong_split)
+			mfd->split_mode = MDP_PINGPONG_SPLIT;
 		/*
 		 * Dynamic change so we need to reconfig instead of
 		 * destroying current ctrl sturcture.
 		 */
 		pdata = dev_get_platdata(&mfd->pdev->dev);
 		mdss_mdp_ctl_reconfig(ctl, pdata);
+
 		sctl = mdss_mdp_get_split_ctl(ctl);
-		if (sctl)
-			mdss_mdp_ctl_reconfig(sctl, pdata->next);
+		if (sctl) {
+			if (mfd->split_mode == MDP_DUAL_LM_DUAL_DISPLAY) {
+				mdss_mdp_ctl_reconfig(sctl, pdata->next);
+				sctl->border_x_off +=
+					pdata->panel_info.lcdc.border_left +
+					pdata->panel_info.lcdc.border_right;
+			} else {
+				/*
+				 * todo: need to revisit this and properly
+				 * cleanup slave resources
+				 */
+				mdss_mdp_ctl_destroy(sctl);
+				ctl->mixer_right = NULL;
+			}
+		} else if (mfd->split_mode == MDP_DUAL_LM_DUAL_DISPLAY) {
+			/* enable split display for the first time */
+			ret = mdss_mdp_ctl_split_display_setup(ctl,
+					pdata->next);
+			if (ret) {
+				mdss_mdp_ctl_destroy(ctl);
+				mdp5_data->ctl = NULL;
+			}
+		}
 	}
 
-	return 0;
+	return ret;
 }
 
 int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd)

@@ -486,6 +486,9 @@ struct clearpad_cover_t {
 	int win_bottom;
 	int win_right;
 	int win_left;
+	u32 tag_x_max;
+	u32 tag_y_max;
+	u32 convert_window_size;
 };
 
 struct clearpad_wakeup_gesture_t {
@@ -3942,7 +3945,7 @@ static ssize_t clearpad_cover_win_store(struct device *dev,
 		struct device_attribute *attr,
 		const char *buf, size_t size)
 {
-	int win_size = 0;
+	int win_size = 0, win_size_org = 0;
 	int rc = 0;
 	struct clearpad_t *this = dev_get_drvdata(dev);
 
@@ -3965,19 +3968,28 @@ static ssize_t clearpad_cover_win_store(struct device *dev,
 		rc = -EINVAL;
 		goto exit;
 	}
+	win_size_org = win_size;
 
-	dev_info(&this->pdev->dev, "%s: %s = %d\n", __func__,
-					attr->attr.name, win_size);
-
-	if (!strncmp(attr->attr.name, "cover_win_top", PAGE_SIZE))
+	if (!strncmp(attr->attr.name, "cover_win_top", PAGE_SIZE)) {
+		if (this->cover.convert_window_size && this->cover.tag_y_max)
+			win_size = win_size * (this->extents.y_max + 1) / this->cover.tag_y_max;
 		this->cover.win_top = win_size;
-	else if (!strncmp(attr->attr.name, "cover_win_bottom", PAGE_SIZE))
+	} else if (!strncmp(attr->attr.name, "cover_win_bottom", PAGE_SIZE)) {
+		if (this->cover.convert_window_size && this->cover.tag_y_max)
+			win_size = win_size * (this->extents.y_max + 1) / this->cover.tag_y_max;
 		this->cover.win_bottom = win_size;
-	else if (!strncmp(attr->attr.name, "cover_win_right", PAGE_SIZE))
+	} else if (!strncmp(attr->attr.name, "cover_win_right", PAGE_SIZE)) {
+		if (this->cover.convert_window_size && this->cover.tag_x_max)
+			win_size = win_size * (this->extents.x_max + 1) / this->cover.tag_x_max;
 		this->cover.win_right = win_size;
-	else if (!strncmp(attr->attr.name, "cover_win_left", PAGE_SIZE))
+	} else if (!strncmp(attr->attr.name, "cover_win_left", PAGE_SIZE)) {
+		if (this->cover.convert_window_size && this->cover.tag_x_max)
+			win_size = win_size * (this->extents.x_max + 1) / this->cover.tag_x_max;
 		this->cover.win_left = win_size;
+	}
 	rc = clearpad_set_cover_window(this);
+	dev_info(&this->pdev->dev, "%s: %s = %d (org %d) rc = %d\n", __func__,
+			attr->attr.name, win_size, win_size_org, rc);
 exit:
 	UNLOCK(this);
 
@@ -4112,6 +4124,18 @@ static int clearpad_touch_config_dt(struct clearpad_t *this)
 	if (of_property_read_u32(devnode, "cover_supported",
 		(u32 *)&this->cover.supported))
 		dev_warn(&this->pdev->dev, "no cover_supported config\n");
+
+	if (of_property_read_u32(devnode, "cover_tag_x_max",
+		&this->cover.tag_x_max))
+		dev_warn(&this->pdev->dev, "no cover_tag_x_max\n");
+
+	if (of_property_read_u32(devnode, "cover_tag_y_max",
+		&this->cover.tag_y_max))
+		dev_warn(&this->pdev->dev, "no cover_tag_y_max\n");
+
+	if (of_property_read_u32(devnode, "convert_cover_win_size",
+		&this->cover.convert_window_size))
+		dev_warn(&this->pdev->dev, "no convert_cover_win_size\n");
 
 	if (of_property_read_u32(devnode, "touch_pressure_enabled",
 		&this->touch_pressure_enabled))

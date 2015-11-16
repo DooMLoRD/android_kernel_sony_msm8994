@@ -3212,6 +3212,76 @@ static u8 tomtom_get_dmic_clk_drv_strength(struct snd_soc_codec *codec,
 	return dmic_clk_drv_strength_val;
 }
 
+static u8 tomtom_get_spkdrv_ocp_curr_limit_val(struct snd_soc_codec *codec,
+	u32 spkdrv_ocp_curr_limit)
+{
+	u8 spkdrv_ocp_curr_limit_val;
+
+	dev_dbg(codec->dev,
+		"%s: spkdrv_ocp_curr_limit = %u\n",
+		__func__, spkdrv_ocp_curr_limit);
+
+	switch (spkdrv_ocp_curr_limit) {
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_0P0_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_0P0_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_0P375_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_0P375_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_0P750_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_0P750_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_1P125_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_1P125_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_1P500_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_1P500_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_1P875_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_1P875_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_2P250_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_2P250_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_2P625_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_2P625_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_3P000_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_3P000_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_3P375_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_3P375_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_3P750_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_3P750_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_4P125_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_4P125_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_4P500_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_4P500_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_4P875_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_4P875_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_5P250_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_5P250_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_I_5P625_A:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_5P625_A;
+		break;
+	case WCD9XXX_SPKDRV_OCP_CURR_LIMIT_UNDEFINED:
+	default:
+		spkdrv_ocp_curr_limit_val = WCD9330_SPKDRV_OCP_CURR_LIMIT_I_2P625_A;
+		dev_dbg(codec->dev,
+			"%s: Invalid spkdrv_ocp_curr_limit, using default\n",
+			__func__);
+		break;
+	}
+
+	return spkdrv_ocp_curr_limit_val;
+}
+
 static int tomtom_codec_enable_dmic(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *kcontrol, int event)
 {
@@ -5416,23 +5486,10 @@ static int tomtom_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 	if (tomtom_is_digital_gain_register(reg))
 		return 1;
 
-	/* HPH status registers */
-	if (reg == TOMTOM_A_RX_HPH_L_STATUS || reg == TOMTOM_A_RX_HPH_R_STATUS)
-		return 1;
-
-	if (reg == TOMTOM_A_MBHC_INSERT_DET_STATUS)
-		return 1;
-
-	if (reg == TOMTOM_A_RX_HPH_CNP_EN)
-		return 1;
-
 	if (((reg >= TOMTOM_A_CDC_SPKR_CLIPDET_VAL0 &&
 	    reg <= TOMTOM_A_CDC_SPKR_CLIPDET_VAL7)) ||
 	    ((reg >= TOMTOM_A_CDC_SPKR2_CLIPDET_VAL0) &&
 	     (reg <= TOMTOM_A_CDC_SPKR2_CLIPDET_VAL7)))
-		return 1;
-
-	if (reg == TOMTOM_A_CDC_VBAT_GAIN_MON_VAL)
 		return 1;
 
 	for (i = 0; i < ARRAY_SIZE(audio_reg_cfg); i++)
@@ -5440,8 +5497,17 @@ static int tomtom_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 		    TOMTOM_REGISTER_START_OFFSET == reg)
 			return 1;
 
-	if (reg == TOMTOM_A_SVASS_SPE_INBOX_TRG)
+	switch (reg) {
+	case TOMTOM_A_RX_HPH_R_STATUS:
+	case TOMTOM_A_RX_HPH_L_STATUS:
+	case TOMTOM_A_MBHC_INSERT_DET_STATUS:
+	case TOMTOM_A_RX_HPH_CNP_EN:
+	case TOMTOM_A_CDC_VBAT_GAIN_MON_VAL:
+	case TOMTOM_A_SVASS_SPE_INBOX_TRG:
+	case TOMTOM_A_BIAS_OSC_BG_CTL:
+	case TOMTOM_A_CLK_BUFF_EN2:
 		return 1;
+	}
 
 	return 0;
 }
@@ -7414,6 +7480,7 @@ static int tomtom_handle_pdata(struct tomtom_priv *tomtom)
 	u32 def_dmic_rate;
 	u32 def_dmic_clk_drv_strength;
 	u16 tx_dmic_ctl_reg;
+	u8 spkdrv_ocp_curr_limit_val;
 
 	if (!pdata) {
 		pr_err("%s: NULL pdata\n", __func__);
@@ -7627,6 +7694,15 @@ static int tomtom_handle_pdata(struct tomtom_priv *tomtom)
 		0x1, anc_ctl_value);
 	snd_soc_update_bits(codec, TOMTOM_A_CDC_ANC2_B2_CTL,
 		0x1, anc_ctl_value);
+
+	spkdrv_ocp_curr_limit_val = tomtom_get_spkdrv_ocp_curr_limit_val(
+					tomtom->codec,
+					pdata->ocp.spkdrv_ocp_curr_limit);
+	snd_soc_update_bits(codec, TOMTOM_A_SPKR_DRV1_OCP_CTL,
+		0xF, spkdrv_ocp_curr_limit_val);
+	snd_soc_update_bits(codec, TOMTOM_A_SPKR_DRV2_OCP_CTL,
+		0xF, spkdrv_ocp_curr_limit_val);
+
 done:
 	return rc;
 }

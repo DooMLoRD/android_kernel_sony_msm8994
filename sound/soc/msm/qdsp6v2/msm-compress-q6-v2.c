@@ -393,8 +393,7 @@ static void compr_event_handler(uint32_t opcode,
 				__func__,
 				payload[3],
 				payload[0],
-				prtd->byte_offset,
-				prtd->copied_total, token);
+				prtd->byte_offset, prtd->copied_total, token);
 			atomic_set(&prtd->start, 0);
 		} else {
 			pr_debug("ASM_DATA_EVENT_WRITE_DONE_V2 offset %d, length %d\n",
